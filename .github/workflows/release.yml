@@ -1,0 +1,66 @@
+name: release
+
+# Publishes the package to NPM. Two triggers:
+#   * workflow_dispatch — manual button on the Actions page. Use this
+#     for the initial v0.1.0 release (the tag already exists) or any
+#     time you want to republish from main HEAD without cutting a new
+#     tag.
+#   * push: tags: ['v*'] — automatic publish when a vX.Y.Z tag lands
+#     on origin. This is the long-term flow: `git tag v0.1.1 && git
+#     push origin v0.1.1` triggers publish.
+#
+# Auth: NPM Trusted Publishing (OIDC). No long-lived NPM_TOKEN
+# required — the workflow exchanges a GitHub OIDC token for a
+# short-lived NPM auth token at publish time. Configure the trusted
+# publisher once on npmjs.com under the package's settings page:
+#   organization:    ejosterberg
+#   repository:      opensalestax-js
+#   workflow:        release.yml
+#   environment:     npm-publish
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC trusted publishing + provenance
+
+jobs:
+  publish:
+    name: publish to NPM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Binds this job to the `npm-publish` GitHub Environment. Trusted
+    # Publishing validates the OIDC token's `environment` claim against
+    # the value configured on the NPM trusted-publisher entry. Both
+    # must match — here: "npm-publish".
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          # Node 24 LTS ships npm 11.x in its toolcache image. Trusted
+          # Publishing requires npm >= 11.5; Node 22's bundled npm 10.x
+          # doesn't authenticate the publish via OIDC and silently
+          # falls back to no-auth (which NPM rejects as E404). See
+          # ~/.claude/npm-trusted-publishing-playbook.md for the
+          # diagnosis history.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Quality gate (lint + typecheck + tests + audit)
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish (trusted publishing + provenance)
+        run: npm publish --access public --provenance
